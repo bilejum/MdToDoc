@@ -82,24 +82,189 @@ export default class MyPlugin extends Plugin {
 			return;
 		}
 
+		// 处理格式化文本的辅助函数
+		const processFormattedText = (text: string) => {
+			const children = [];
+			let currentIndex = 0;
+			const boldRegex = /\*\*(.*?)\*\*|__(.*?)__/g;
+			let match;
+
+			while ((match = boldRegex.exec(text)) !== null) {
+				// 添加加粗文本前的普通文本
+				if (match.index > currentIndex) {
+					children.push(new TextRun({
+						text: text.slice(currentIndex, match.index)
+					}));
+				}
+
+				// 添加加粗文本
+				const boldText = match[1] || match[2];
+				children.push(new TextRun({
+					text: boldText,
+					bold: true
+				}));
+
+				currentIndex = match.index + match[0].length;
+			}
+
+			// 添加最后剩余的普通文本
+			if (currentIndex < text.length) {
+				children.push(new TextRun({
+					text: text.slice(currentIndex)
+				}));
+			}
+
+			// 如果没有找到任何格式化，就添加整个文本
+			if (children.length === 0) {
+				children.push(new TextRun({ text }));
+			}
+
+			return children;
+		};
+
 		// 简单的Markdown转docx实现（仅处理段落和标题）
 		const lines = content.split(/\r?\n/);
 		const docParagraphs: Paragraph[] = [];
 		for (const line of lines) {
 			if (/^# (.*)/.test(line)) {
-				docParagraphs.push(new Paragraph({ text: line.replace(/^# /, ''), heading: 'Heading1' }));
-			} else if (/^## (.*)/.test(line)) {
-				docParagraphs.push(new Paragraph({ text: line.replace(/^## /, ''), heading: 'Heading2' }));
+				const content = line.replace(/^# /, '');
+				docParagraphs.push(new Paragraph({
+					children: processFormattedText(content),
+					heading: 'Heading1'
+				}));
+			}
+			else if (/^## (.*)/.test(line)) {
+				const content = line.replace(/^## /, '');
+				docParagraphs.push(new Paragraph({
+					children: processFormattedText(content),
+					heading: 'Heading2'
+				}));
 			} else if (/^### (.*)/.test(line)) {
-				docParagraphs.push(new Paragraph({ text: line.replace(/^### /, ''), heading: 'Heading3' }));
+				const content = line.replace(/^### /, '');
+				docParagraphs.push(new Paragraph({
+					children: processFormattedText(content),
+					heading: 'Heading3'
+				}));
 			} else if (line.trim() === '') {
 				docParagraphs.push(new Paragraph({ text: '' }));
+			}
+
+			else if (line.startsWith('> ') || line.startsWith('>')) {
+				docParagraphs.push(new Paragraph({
+					children: [new TextRun({ text: line.replace(/^> /, '') })],
+					indent: { left: 720 }, // 缩进大约1厘米
+					spacing: { before: 240, after: 240 }, // 上下间距
+					shading: { type: 'solid', color: 'E8E8E8' } // 灰色背景
+				}));
+			}
+			else if (line.startsWith('- ') || line.startsWith('* ')) {
+				docParagraphs.push(new Paragraph({
+					children: [new TextRun({ text: line.replace(/^[-*] /, '') })],
+					bullet: {
+						level: 0 // 无序列表级别
+					}
+				}));
+			}
+			else if (/^\d+\. /.test(line)) { // 修改为支持任意数字的有序列表
+				docParagraphs.push(new Paragraph({
+					children: [new TextRun({ text: line.replace(/^\d+\. /, '') })],
+					numbering: {
+						reference: "1", // 编号引用ID应该是字符串
+						level: 0 // 有序列表级别
+					}
+				}));
+			}
+			else if (line.startsWith('```')) {
+				docParagraphs.push(new Paragraph({ text: line.replace(/^```/, ''), style: 'codeBlock' }));
+			}
+			else if (line.startsWith('`')) {
+				docParagraphs.push(new Paragraph({ text: line.replace(/^`/, '').replace(/`$/, ''), style: 'inlineCode' }));
+			}
+			else if (line.startsWith('---') || line.startsWith('***')) {
+				docParagraphs.push(new Paragraph({ text: line.replace(/^[*-]{3,}$/, ''), style: 'horizontalLine' }));
+			}
+			else if (line.startsWith('[') && line.includes('](')) {
+				// 处理链接
+				const match = line.match(/\[(.*?)\]\((.*?)\)/);
+				if (match) {
+					const [, text, url] = match;
+					// 使用 docx 的 Hyperlink 类
+					// @ts-ignore
+					const { Hyperlink } = require("docx");
+					const hyperlink = new Hyperlink(url, new TextRun(text));
+					docParagraphs.push(new Paragraph({ children: [hyperlink] }));
+				}
+			}
+			else if (line.startsWith('![') && line.includes('](')) {
+				// 处理图片
+				const match = line.match(/!\[(.*?)\]\((.*?)\)/);
+				if (match) {
+					const [, altText, imageUrl] = match;
+					// 使用 docx 的 ImageRun 类
+					// @ts-ignore
+					const { ImageRun } = require("docx");
+					const imageFile = this.app.vault.getAbstractFileByPath(imageUrl);
+					// @ts-ignore
+					const TFile = this.app.vault.constructor.TFile;
+					if (imageFile && imageFile instanceof TFile) {
+						const imageRun = new ImageRun({
+							data: await this.app.vault.readBinary(imageFile as typeof TFile),
+							transform: {
+								width: 100, // 设置图片宽度
+								height: 100 // 设置图片高度
+							}
+						});
+						docParagraphs.push(new Paragraph({ children: [imageRun] }));
+					} else {
+						docParagraphs.push(new Paragraph({ text: `[图片未找到: ${altText}]` }));
+					}
+				}
+			}
+
+			else if (line.startsWith('**') || line.startsWith('__')) {
+				// 处理粗体
+				docParagraphs.push(new Paragraph({
+					children: [new TextRun({ text: line.replace(/^\*\*|\_\_|\*\*$/g, ''), bold: true })]
+				}));
+			}
+			else if (line.startsWith('*') || line.startsWith('_')) {
+				// 处理斜体
+				docParagraphs.push(new Paragraph({
+					children: [new TextRun({ text: line.replace(/^\*|\_|\*$/g, ''), italics: true })]
+				}));
+			}
+			else if (line.startsWith('***') || line.startsWith('___')) {
+				// 处理斜体
+				docParagraphs.push(new Paragraph({
+					children: [new TextRun({ text: line.replace(/^\*\*\*|\_\_\_|\*\*\*$/g, ''), italics: true })]
+
+				}));
 			} else {
 				docParagraphs.push(new Paragraph({ text: line }));
 			}
 		}
 
 		const doc = new Document({
+			numbering: {
+				config: [
+					{
+						reference: "1",
+						levels: [
+							{
+								level: 0,
+								format: "decimal",
+								text: "%1.",
+								alignment: "start",
+								style: {
+									paragraph: {
+										indent: { left: 720, hanging: 360 }
+									}
+								}
+							}
+						]
+					}
+				]
+			},
 			sections: [
 				{
 					properties: {},

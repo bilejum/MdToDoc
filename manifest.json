@@ -1,9 +1,9 @@
 {
 	"id": "MdToDoc",
 	"name": "MdToDoc",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"minAppVersion": "0.15.0",
-	"description": "专为移动端设计的markdown转word插件，无需pandoc！ 支持中文和英文，导出为docx格式。",
+	"description": "专为移动端设计的markdown转word插件，无需pandoc！ 导出为docx格式，最新版本新增了粗体，斜体，编号，链接，代码块的支持",
 	"author": "Obsidian",
 	"authorUrl": "https://github.com/bilejum",
 	"fundingUrl": "https://obsidian.md/pricing",
